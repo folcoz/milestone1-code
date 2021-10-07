@@ -24,7 +24,11 @@ type (
 
 const ctypeJSON string = "application/json"
 
-func StartListener(address string) {
+var storage secrets.Storage
+
+func StartListener(address string, s secrets.Storage) {
+	storage = s
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthcheck", healthcheckHandler)
 	mux.HandleFunc("/", secretHandler)
@@ -74,7 +78,7 @@ func postSecretHandler(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	var hash string
-	hash, err = secrets.SaveSecret(plainText)
+	hash, err = storage.SaveSecret(plainText)
 	if err != nil {
 		serverError(writer, err.Error())
 		return
@@ -85,15 +89,13 @@ func postSecretHandler(writer http.ResponseWriter, request *http.Request) {
 }
 
 func sendSecretId(writer http.ResponseWriter, hash string) {
-	var output postOutput
-	output.Id = hash
+	output := postOutput{Id: hash}
 	writer.Header().Set("Content-Type", ctypeJSON)
 	json.NewEncoder(writer).Encode(output)
 }
 
 func sendSecretData(writer http.ResponseWriter, value string) {
-	var output getOutput
-	output.Data = value
+	output := getOutput{Data: value}
 	writer.Header().Set("Content-Type", ctypeJSON)
 	json.NewEncoder(writer).Encode(output)
 }
@@ -103,26 +105,12 @@ func contentTypeIs(request *http.Request, expected string) bool {
 	return ctype == ctypeJSON
 }
 
-func sendError(writer http.ResponseWriter, statusCode int, msg string) {
-	writer.WriteHeader(statusCode)
-	if msg != "" {
-		var prefix string
-		switch {
-		case statusCode >= 500:
-			prefix = "Server Error: "
-		case statusCode >= 400:
-			prefix = "Bad Request: "
-		}
-		fmt.Fprintf(writer, "%s%s", prefix, msg)
-	}
-}
-
 func badRequest(writer http.ResponseWriter, msg string) {
-	sendError(writer, 400, msg)
+	http.Error(writer, msg, 400)
 }
 
 func serverError(writer http.ResponseWriter, msg string) {
-	sendError(writer, 500, msg)
+	http.Error(writer, msg, 500)
 }
 
 func sendSecretNotFound(writer http.ResponseWriter) {
@@ -138,7 +126,7 @@ func getSecretHandler(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	value, err := secrets.LoadSecret(id)
+	value, err := storage.FetchSecret(id)
 	if err != nil {
 		serverError(writer, err.Error())
 		return

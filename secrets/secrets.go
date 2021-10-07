@@ -9,36 +9,19 @@ import (
 	"sync"
 )
 
+type Storage interface {
+	FetchSecret(id string) (string, error)
+	SaveSecret(plainText string) (string, error)
+}
+
 type (
 	secretsMap map[string]string
+
+	fileStorage struct {
+		secretsFile string
+		fileLock    sync.Mutex
+	}
 )
-
-const dataFilePathVarname string = "DATA_FILE_PATH"
-
-var secretsFile string
-var fileLock sync.Mutex
-
-func InitFile() error {
-	filePath, err := fetchSecretsFilepath()
-	if err != nil {
-		return err
-	}
-
-	err = createFile(filePath)
-	if err != nil {
-		return err
-	}
-
-	secretsFile = filePath
-	return nil
-}
-
-func fetchSecretsFilepath() (string, error) {
-	if filePath := os.Getenv(dataFilePathVarname); filePath != "" {
-		return filePath, nil
-	}
-	return "", fmt.Errorf("environment variable %s has not been set; please set it to the secrets file path", dataFilePathVarname)
-}
 
 func createFile(filePath string) error {
 	_, err := os.Stat(filePath)
@@ -50,7 +33,7 @@ func createFile(filePath string) error {
 	return err
 }
 
-func readJSONFile() (secretsMap, error) {
+func readJSONFile(secretsFile string) (secretsMap, error) {
 	// Read JSON file as map[string]string
 	content, err := os.ReadFile(secretsFile)
 	theSecrets := new(secretsMap)
@@ -59,34 +42,34 @@ func readJSONFile() (secretsMap, error) {
 	return *theSecrets, err
 }
 
-func saveJSONFile(m secretsMap) error {
-	content, err := json.Marshal(m)
+func saveJSONFile(secretsFile string, m secretsMap) error {
+	content, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(secretsFile, content, 0666)
 }
 
-func writeSecret(hash string, value string) error {
-	fileLock.Lock()
-	defer fileLock.Unlock()
+func writeSecret(fs *fileStorage, hash string, value string) error {
+	fs.fileLock.Lock()
+	defer fs.fileLock.Unlock()
 
-	theSecrets, err := readJSONFile()
+	theSecrets, err := readJSONFile(fs.secretsFile)
 	if err != nil {
 		return err
 	}
 
 	theSecrets[hash] = value
-	err = saveJSONFile(theSecrets)
+	err = saveJSONFile(fs.secretsFile, theSecrets)
 
 	return err
 }
 
-func LoadSecret(id string) (string, error) {
-	fileLock.Lock()
-	defer fileLock.Unlock()
+func (fs *fileStorage) FetchSecret(id string) (string, error) {
+	fs.fileLock.Lock()
+	defer fs.fileLock.Unlock()
 
-	theSecrets, err := readJSONFile()
+	theSecrets, err := readJSONFile(fs.secretsFile)
 	if err != nil {
 		return "", err
 	}
@@ -97,13 +80,25 @@ func LoadSecret(id string) (string, error) {
 	}
 
 	delete(theSecrets, id)
-	err = saveJSONFile(theSecrets)
+	err = saveJSONFile(fs.secretsFile, theSecrets)
 
 	return value, err
 }
 
-func SaveSecret(plainText string) (string, error) {
+func (fs *fileStorage) SaveSecret(plainText string) (string, error) {
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(plainText)))
-	err := writeSecret(hash, plainText)
+	err := writeSecret(fs, hash, plainText)
 	return hash, err
+}
+
+func NewFileStorage(filePath string) (Storage, error) {
+	err := createFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &fileStorage{
+		secretsFile: filePath,
+		fileLock:    sync.Mutex{},
+	}, nil
 }
