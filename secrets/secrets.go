@@ -23,6 +23,8 @@ type (
 	}
 )
 
+var errEmptySecret error = fmt.Errorf("cannot save an empty secret")
+
 func createFile(filePath string) error {
 	_, err := os.Stat(filePath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -86,6 +88,10 @@ func (fs *fileStorage) FetchSecret(id string) (string, error) {
 }
 
 func (fs *fileStorage) SaveSecret(plainText string) (string, error) {
+	if plainText == "" {
+		return "", errEmptySecret
+	}
+
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(plainText)))
 	err := writeSecret(fs, hash, plainText)
 	return hash, err
